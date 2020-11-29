@@ -26,7 +26,7 @@ Pierre Briole (briole@ens.fr)
 References
 Thingbaijam, K.K.S., Martin Mai, P. & Goda, K., 2017. New Empirical Earthquake Source-Scaling Laws, BSSA, 107(5), 2225–2246, http://doi.org/10.1785/0120170017
 Wells, D.L. & Coppersmith, K.J., 1994. New empirical relationships among magnitude, rupture length, rupture width, rupture area, and surface displacement, BSSA, 84(4), 974-1002.
-Okada 1985 for the model, Tarantola and Valette 1982 for the inversion, Briole et al., 1986 for the initial version of the software https://www.scopus.com/record/display.uri?eid=2-s2.0-0022879463&origin=inward&txGid=23cc1f7dfe0c13e5a489090f02957406
+Okada 1985 for the model, Tarantola and Valette 1982 for the inversion, Briole et al., 1986 for the initial version of the software 
 
 License
 Copyright 2020 Pierre Briole - CNRS/ENS
