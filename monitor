@@ -1,0 +1,134 @@
+#!/bin/bash
+# MONITOR
+#
+# Monitors Centroid Moment Tensors from various agencies and calculates theoretical fault planes for calculation of ground deformation
+# Pierre Briole 8 December 2017 - v1.0 - 29 November 2019 - v2.0 - 3 December 2019 v3.1 - 29 November 2020 v 3.2
+#
+# The program can be used manually or inserted in a cron table
+# The output is formatted for input in the inverse6 code, see https://doi.org/10.5281/zenodo.1098391
+#
+# The definition of the fault size and slip is adapted from the following papers:
+# Thingbaijam, K.K.S., Martin Mai, P. & Goda, K., 2017. New Empirical Earthquake Source-Scaling Laws, BSSA, 107(5), 2225–2246, http://doi.org/10.1785/0120170017
+# Wells, D.L. & Coppersmith, K.J., 1994. New empirical relationships among magnitude, rupture length, rupture width, rupture area, and surface displacement, BSSA, 84(4), 974-1002.
+# The rigidity of the crust is assumed to be u = 3 10^10 Pa
+# If sd = surface of the fault x slip, then sd = M/u where M is the seismic moment (published by the seismological centres)
+# The length is assumed to be ll = (sd * 15000 ) ^ 1/3
+# The width is assumed to be wi = ll/1.6
+# Those approximations are sufficient to provide first order parameters of the faults good enough to predict the displacements at the GPS stations located around the fault
+# When GPS data are available, the fault paramters can be ajusted using a elastic model (e.g. Okada Y., 1992. Internal deformation due to shear and tensile faults in a half space, BSSA, 82, 1018–1040).
+# And an inverse programme (e.g. inverse6, https://doi.org/10.5281/zenodo.1098391)
+
+usage() { echo "Usage: $0 [-a <greece|eurasia|custom>] [-f <1-to-64>] [-s <gcmt|gfz>] [-h] [date1[date2]]" 1>&2; exit 1; }
+
+if [ $# -le 0 ]; then echo "Monitor GCMT and GFZ"                                                                                                                                      # Quick help
+  echo "Usage: $0 -a area -f utm_zone -s data_source [date1[date2]]"; echo "Exemple: $0 -a greece -f 34 -s gcmt 2019/11/20 2019/12/01"; echo "Help   : $0 -h";exit; fi
+
+zo=36,42,19,25; so=gcmt; rm -f selection.txt                                                                                                                                   # Default parameters
+rngcmt=https://www.globalcmt.org/cgi-bin/globalcmt-cgi-bin/CMT5
+
+while getopts "a:f:s:h" opt; do
+  case $opt in
+    a) ar=("$OPTARG")                                                                                                                                                                # Working area
+       case $ar in
+         greece) zo="36,42,19,25"; ;;
+         eurasia) zo="34,48,0,50"; ;;
+         *)
+           zo=$ar; zoo=`echo $zo | tr -d 0-9 | tr -d .`
+           if [ $zoo != ",,," ]; then echo "Wrong syntax for area"; usage; fi                                                                                                         # Test syntax
+           ;;
+       esac
+       ;;
+    f) fus=("$OPTARG"); echo 'Force zone ' $fus; ((fus >= 1 && fus <= 64)) || usage ;;
+    s) so=("$OPTARG")
+      case $so in
+        gfz)   echo "Source GFZ"; rgfz=https://geofon.gfz-potsdam.de/eqinfo/list.php; ;;
+        gcmt)  echo "Source GCMT"; rngcmt=https://www.globalcmt.org/cgi-bin/globalcmt-cgi-bin/CMT5; ;;
+        *)     echo "Wrong source"; usage; ;;
+      esac
+      ;;
+    h) echo -e "Options\n -a : area: grece (default), eurasia, lat,lat,long,long\n -f : UTM zone (1 to 64), default=34\n -s : source: gcmt (default), gfz\n -h : help"; exit; ;;       # Quick help
+    *) usage; ;;
+  esac
+done
+shift $((OPTIND-1))
+
+ami=`echo $zo | awk -F"," '{print $1}'`; ama=`echo $zo | awk -F"," '{print $2}'`; omi=`echo $zo | awk -F"," '{print $3}'`; oma=`echo $zo | awk -F"," '{print $4}'`               # Extract lat long
+
+if [ -n "$1" ]; then d1=$1; else d1=`date +\%Y/\%m/\%d`; fi; d2=$d1; if [ -n "$2" ]; then d2=$2; fi                                                                       # Case of 0 or 1 argument
+
+dd1=`date -d $d1 +\%s`; dd2=`date -d $d2 +\%s`                                                                                                                                 # Various characters
+aaa=${d1/\//-}; df1=${aaa/\//-}; aaa=${d2/\//-}; df2=${aaa/\//-}
+y1=`echo $d1 | awk -F"/" '{print $1}'`; m1=`echo $d1 | awk -F"/" '{print $2}'`; d1=`echo $d1 | awk -F"/" '{print $3}'`
+y2=`echo $d2 | awk -F"/" '{print $1}'`; m2=`echo $d2 | awk -F"/" '{print $2}'`; d2=`echo $d2 | awk -F"/" '{print $3}'`
+
+case $so in  
+gcmt)                                                                                                                                                                             # Fetch GCMT data
+
+echo $rngcmt/form?itype=ymd\&yr=$y1\&mo=$m1\&day=$d1\&otype=ymd\&oyr=$y2\&omo=$m2\&oday=$d2\&llat=$ami\&ulat=$ama\&llon=$omi\&ulon=$oma\&list=0
+
+  curl -s $rngcmt/form?itype=ymd\&yr=$y1\&mo=$m1\&day=$d1\&otype=ymd\&oyr=$y2\&omo=$m2\&oday=$d2\&llat=$ami\&ulat=$ama\&llon=$omi\&ulon=$oma\&list=0 > titi                 # Fetch selected events
+  cat titi | grep "<hr><b>" | awk '{print $1}' | awk -F">" '{print $3}' > events
+  while read li; do echo $li
+    a=`grep ""$li"" titi -n | awk -F":" '{print $1}'`; b=$(($a+9)); sed -n ""$a","$b"p" titi > ta
+    sec=`sed -n  3p ta`; da=`echo ${sec:13:12} | tr " " 0`; ti=`echo ${sec:41:10} | tr " " 0`                                                                                    # Fetch data, time
+    lo=`sed -n  4p ta | awk '{print $4}'`; la=`sed -n 4p ta | awk '{print $2}'`;  de=`sed -n 5p ta | awk '{print $2}'`; mag=`sed -n 8p ta | awk '{print $3}'`         # Fetch long, lat, depth, mag
+    s1=`sed -n  9p ta | awk '{print $3}'  | awk -F"=" '{print $2}'`; d1=`sed -n 9p ta  | awk '{print $4}'  | awk -F"=" '{print $2}'`; r1=`sed -n 9p ta | awk '{print $5}' | awk -F"=" '{print $2}'`
+    s2=`sed -n 10p ta | awk '{print $3}'  | awk -F"=" '{print $2}'`; d2=`sed -n 10p ta | awk '{print $4}'  | awk -F"=" '{print $2}'`                                     # Fetch slip2, dip2, rake2
+    r2=`sed -n 10p ta | awk '{print $5}'  | awk -F"=" '{print $2}' | awk -F"<" '{print $1}'`
+    mo=`sed -n  8p ta | awk '{print $13}' | awk -F"e" '{print $1}'`; ex=`sed -n 8p ta  | awk '{print $13}' | awk -F"+" '{print $2}'`; ex=$(($ex-7))                          # Fetch seismic moment
+    echo $da $ti $mag $de $lo $la $s1 $d1 $r1 $s2 $d2 $r2 $mo $ex $li >> selection.txt
+  done < events; rm -f titi ta events
+  ;;
+gfz)
+  curl -s $rgfz?datemin=$df1\&datemax=$df2\&latmax=$ama\&lonmin=$omi\&lonmax=$oma\&latmin=$ami\&magmin=4\&mode=mt\&fmt=html\&nmax= | grep MT | awk '{print $3}' | awk -F"/" '{print $5}' > titi
+  while read li; do echo $li; yy=${li:3:4}; wget -q https://geofon.gfz-potsdam.de/data/alerts/$yy/$li/mt.txt; mv mt.txt $li.txt                                     # Fetch data file of each event
+    da=`sed -n  2p $li.txt | awk '{print $1}'`; ti=`sed -n 2p $li.txt | awk '{print $2}'`; mag=`sed -n 5p $li.txt | awk '{print $2}'`                                     # Fetch date, time, depth
+    lo=`sed -n  4p $li.txt | awk '{print $3}'`; la=`sed -n 4p $li.txt | awk '{print $2}'`;  de=`sed -n 8p $li.txt | awk '{print $2}'`                                      # Fetch long, lat, depth
+    sec=`sed -n 19p $li.txt`; s1=${sec:12:3}; d1=${sec:20:2}; r1=${sec:28:4}                                                                                             # Fetch slip1, dip1, rake1
+    s2=`sed -n 20p $li.txt | awk '{print $2}'`; d2=`sed -n 20p $li.txt | awk '{print $3}'`; r2=`sed -n 20p $li.txt | awk '{print $4}'`                                   # Fetch slip2, dip2, rake2
+    mo=`sed -n 18p $li.txt | awk -F"=" '{print $2}' | awk -F"*" '{print $1}'`; ex=`sed -n 18p $li.txt | awk -F"*" '{print $4}'`                                              # Fetch seismic moment
+    echo $da $ti $mag $de $lo $la $s1 $d1 $r1 $s2 $d2 $r2 $mo $ex $li >> selection.txt
+    rm $li.txt
+  done < titi; rm -f titi
+  ;;
+esac
+
+if [ -f selection.txt ]; then
+
+while read li; do echo "--------------------------------"
+  echo $li
+  da=`echo $li | awk '{print $1}'`; ti=`echo $li | awk '{print $2}'`; mag=`echo $li | awk '{print $3}'`; de=`echo $li | awk '{print $4}'`
+  lo=`echo $li | awk '{print $5}'`;  la=`echo $li | awk '{print $6}'`
+  s1=`echo $li | awk '{print $7}'`;  d1=`echo $li | awk '{print $8}'`;  r1=`echo $li | awk '{print $9}'`
+  s2=`echo $li | awk '{print $10}'`; d2=`echo $li | awk '{print $11}'`; r2=`echo $li | awk '{print $12}'`
+  mo=`echo $li | awk '{print $13}'`; ex=`echo $li | awk '{print $14}'`
+  echo -e "Event : "$code $da $ti"\nCoordinates : "$la $lo $de $mag"\nMoment : "$mo $ex"\nPlanes : "$s1 $d1 $r1 $s2 $d2 $r2
+
+  sd=`echo "($mo*10^($ex-10))/3" | bc -l`; ll=`echo "e(l($sd*15000)/3)" | bc -l`; wi=`echo "$ll/1.6" | bc -l`; sl=`echo "$sd/$ll/$wi" | bc -l`                                         # Fault size
+
+  de1=`echo "$de*1000-$wi*s($d1/57.296)" | bc -l`; de2=`echo "$de*1000-$wi*s($d2/57.296)" | bc -l`
+  sl1n=`echo "-$sl*s($r1/57.296)*1000" | bc -l`; sl1d=`echo "$sl*c($r1/57.296)*1000" | bc -l`                                                                                     # Slip (plane 1) 
+  sl2n=`echo "-$sl*s($r2/57.296)*1000" | bc -l`; sl2d=`echo "$sl*c($r2/57.296)*1000" | bc -l`                                                                                     # Slip (plane 2)
+
+  if [ ! -z $fus ]; then fu=$fus; else fu=`echo "31+$lo/6" | bc`; fi                                                                              # Calculates zone or uses that given in option -f
+  echo $lo $la | proj +ellps=WGS84 +proj=utm +zone=$fu > tu                                                                                     # Convert in UTM (proj routine should be installed)
+  
+  xhy=`cat tu | awk '{print $1}'`; yhy=`cat tu | awk '{print $2}'`; echo "UTM zone : "$fu; rm tu; echo "------"                                                                    # Convert in UTM
+  xlo1=`echo "$xhy-$wi*c($d1/57.296)*c($s1/57.296)" | bc -l`; ylo1=`echo "$yhy+$wi*c($d1/57.296)*s($s1/57.296)" | bc -l`                                           # Centre of upper edge (plane 1)
+  xlo2=`echo "$xhy-$wi*c($d2/57.296)*c($s2/57.296)" | bc -l`; ylo2=`echo "$yhy+$wi*c($d2/57.296)*s($s2/57.296)" | bc -l`                                           # Centre of upper edge (plane 2)
+
+  zx=`echo "scale=2;$xlo1/1000" | bc -l`; zy=`echo "scale=2;$ylo1/1000" | bc -l`; zz=`echo "scale=1;$de1/1000" | bc -l`
+  zl=`echo "scale=1;$ll/2000" | bc -l`; zw=`echo "scale=1;$wi/1000" | bc -l`
+  sln=`echo "scale=0;$sl1n/1" | bc -l`; sld=`echo "scale=0;$sl1d/1" | bc -l`
+
+  echo""; echo "Focal plane 1"
+  echo $zx "1." $zy "1."; echo $s1 "0."; echo $zz "1."; echo $zl "1." $zw "1."; echo $d1 "0."; echo $sld"." "10." $sln"." "10." "0." "0."                                   # Parameters of plane 1
+
+  zx=`echo "scale=2;$xlo2/1000" | bc -l`; zy=`echo "scale=2;$ylo2/1000" | bc -l`; zz=`echo "scale=1;$de2/1000" | bc -l`
+  sln=`echo "scale=0;$sl2n/1" | bc -l`; sld=`echo "scale=0;$sl2d/1" | bc -l`
+
+  echo""; echo "Focal plane 2"
+  echo $zx "1." $zy "1."; echo $s2 "0."; echo $zz "1."; echo $zl "1." $zw "1."; echo $d2 "0."; echo $sld"." "10." $sln"." "10." "0." "0."                                   # Parameters of plane 2
+done < selection.txt
+
+mv selection.txt $so"-"$df1"-"$df2".txt"; fi
